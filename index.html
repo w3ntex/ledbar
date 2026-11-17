@@ -199,17 +199,27 @@ function setPower(on) {
 }
 $('power').onclick = () => setPower(!isOn);
 $('connectBtn').onclick = pick;
-// Plein écran si le navigateur le permet
+// Plein écran : le navigateur exige un toucher, donc on le (ré)active au premier toucher
+// et on retient le choix pour les prochaines ouvertures.
 const root = document.documentElement;
 const fsReq = root.requestFullscreen || root.webkitRequestFullscreen;
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+const enterFs = () => { try { const r = fsReq.call(root); if (r && r.catch) r.catch(() => {}); } catch (e) {} };
+let wantFs = false;
+try { wantFs = localStorage.getItem('fs') !== '0'; } catch (e) {}
 if (fsReq) {
   $('fsBtn').style.display = '';
-  $('fsBtn').onclick = () => {
-    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
-    if (fsEl) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-    else fsReq.call(root);
+  $('fsBtn').onclick = e => {
+    e.stopPropagation();
+    if (fsEl()) { wantFs = false; (document.exitFullscreen || document.webkitExitFullscreen).call(document); }
+    else { wantFs = true; enterFs(); }
+    try { localStorage.setItem('fs', wantFs ? '1' : '0'); } catch (e) {}
   };
+  const auto = () => { if (wantFs && !fsEl()) enterFs(); };
+  document.addEventListener('touchend', auto, true);
+  document.addEventListener('click', auto, true);
 }
+
 $('share').classList.toggle('on', share);
 $('share').onclick = () => {
   share = !share; localStorage.setItem('share', share ? '1' : '0');
