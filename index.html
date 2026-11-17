@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#111">
 <title>LedBar</title>
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
   :root { --bg:#0f0f12; --card:#1b1b20; --line:#2c2c33; --txt:#f2f2f5; --dim:#8b8b96; --acc:#ffb020; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -41,6 +45,7 @@
   <header>
     <span class="dot off" id="dot"></span>
     <h1>LedBar</h1>
+    <button id="fsBtn" aria-label="Plein écran" style="display:none">⤢</button>
     <button id="connectBtn" class="primary">Connecter</button>
   </header>
   <div id="status">Appuie sur « Connecter » puis touche ELK-BLEDOB dans la liste.</div>
@@ -194,6 +199,17 @@ function setPower(on) {
 }
 $('power').onclick = () => setPower(!isOn);
 $('connectBtn').onclick = pick;
+// Plein écran si le navigateur le permet
+const root = document.documentElement;
+const fsReq = root.requestFullscreen || root.webkitRequestFullscreen;
+if (fsReq) {
+  $('fsBtn').style.display = '';
+  $('fsBtn').onclick = () => {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    if (fsEl) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else fsReq.call(root);
+  };
+}
 $('share').classList.toggle('on', share);
 $('share').onclick = () => {
   share = !share; localStorage.setItem('share', share ? '1' : '0');
