@@ -77,7 +77,8 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const SERVICE = 0xfff0, CHAR = 0xfff3;
+const SERVICE = '0000fff0-0000-1000-8000-00805f9b34fb', CHAR = '0000fff3-0000-1000-8000-00805f9b34fb';
+const errText = e => (e && (e.message || e.name)) || String(e);
 let device = null, ch = null, connecting = null, releaseTimer = null;
 let isOn = true, share = localStorage.getItem('share') !== '0';
 let hue = 0, sat = 0, fxTimer = null, fxSel = null, fxT = 0;
@@ -94,10 +95,16 @@ async function pick() {
     return;
   }
   try {
-    device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: 'ELK-BLEDOB' }, { namePrefix: 'ELK-BLEDOM' }],
-      optionalServices: [SERVICE]
-    });
+    try {
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: 'ELK' }, { services: [SERVICE] }],
+        optionalServices: [SERVICE]
+      });
+    } catch (e) {
+      // Certains navigateurs refusent ces filtres : on liste tous les appareils
+      if (e && e.name === 'NotFoundError' && /cancel/i.test(errText(e))) throw e;
+      device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE] });
+    }
     device.addEventListener('gattserverdisconnected', () => {
       ch = null;
       setStatus(fxTimer ? 'Reconnexion…' : 'Prêt (connexion libérée pour le PC)', 'off');
@@ -106,7 +113,7 @@ async function pick() {
     $('controls').classList.remove('disabled');
     $('connectBtn').textContent = 'Changer';
     await ensure();
-  } catch (e) { setStatus('Connexion annulée : ' + e.message, 'off'); }
+  } catch (e) { setStatus('Connexion impossible (' + errText(e) + '). Vérifie que la lampe est allumée et que LedBar sur le Mac ne joue pas d\'effet, puis réessaie.', 'off'); }
 }
 
 function ensure() {
@@ -146,7 +153,7 @@ async function pump() {
       if (c.writeValueWithoutResponse) await c.writeValueWithoutResponse(data);
       else await c.writeValue(data);
     }
-  } catch (e) { setStatus('Erreur : ' + e.message, 'off'); ch = null; }
+  } catch (e) { setStatus('Erreur : ' + errText(e), 'off'); ch = null; }
   writing = false;
   scheduleRelease();
 }
