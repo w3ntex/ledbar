@@ -43,7 +43,7 @@
     <h1>LedBar</h1>
     <button id="connectBtn" class="primary">Connecter</button>
   </header>
-  <div id="status">Appuie sur « Connecter » et choisis ELK-BLEDOB.</div>
+  <div id="status">Appuie sur « Connecter » puis touche ELK-BLEDOB dans la liste.</div>
 
   <div id="controls" class="disabled" style="display:flex;flex-direction:column;gap:14px">
     <div class="card">
@@ -116,16 +116,10 @@ async function pick() {
     return;
   }
   try {
-    try {
-      device = await navigator.bluetooth.requestDevice({
-        filters: [{ namePrefix: 'ELK' }, { services: [SERVICE] }],
-        optionalServices: [SERVICE]
-      });
-    } catch (e) {
-      // Certains navigateurs refusent ces filtres : on liste tous les appareils
-      if (e && e.name === 'NotFoundError' && /cancel/i.test(errText(e))) throw e;
-      device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE] });
-    }
+    // La lampe n'annonce aucun service dans son signal : on liste tous les appareils
+    // (elle apparaît sous le nom « ELK-BLEDOB »).
+    const d = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE] });
+    device = d;
     await attach(device);
   } catch (e) { setStatus('Connexion impossible (' + errText(e) + '). Vérifie que la lampe est allumée et que LedBar sur le Mac ne joue pas d\'effet, puis réessaie.', 'off'); }
 }
