@@ -89,6 +89,27 @@ function setStatus(t, state) {
 }
 
 // ---------- Bluetooth ----------
+async function attach(d) {
+  device = d;
+  device.addEventListener('gattserverdisconnected', () => {
+    ch = null;
+    setStatus(fxTimer ? 'Reconnexion…' : 'Prêt (connexion libérée pour le PC)', 'off');
+    if (fxTimer) ensure();
+  });
+  $('controls').classList.remove('disabled');
+  $('connectBtn').textContent = 'Changer';
+  await ensure();
+}
+
+// Reconnexion automatique à la lampe déjà autorisée (sans repasser par la liste)
+async function autoConnect() {
+  if (!navigator.bluetooth || !navigator.bluetooth.getDevices) return;
+  try {
+    const known = (await navigator.bluetooth.getDevices()).find(d => (d.name || '').startsWith('ELK'));
+    if (known) { setStatus('Connexion automatique…'); await attach(known); }
+  } catch (e) { setStatus('Appuie sur « Connecter » et choisis ELK-BLEDOB.', 'off'); }
+}
+
 async function pick() {
   if (!navigator.bluetooth) {
     setStatus("Ce navigateur ne gère pas le Bluetooth. Ouvre cette page dans l'app Bluefy.", 'off');
@@ -105,14 +126,7 @@ async function pick() {
       if (e && e.name === 'NotFoundError' && /cancel/i.test(errText(e))) throw e;
       device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE] });
     }
-    device.addEventListener('gattserverdisconnected', () => {
-      ch = null;
-      setStatus(fxTimer ? 'Reconnexion…' : 'Prêt (connexion libérée pour le PC)', 'off');
-      if (fxTimer) ensure();
-    });
-    $('controls').classList.remove('disabled');
-    $('connectBtn').textContent = 'Changer';
-    await ensure();
+    await attach(device);
   } catch (e) { setStatus('Connexion impossible (' + errText(e) + '). Vérifie que la lampe est allumée et que LedBar sur le Mac ne joue pas d\'effet, puis réessaie.', 'off'); }
 }
 
@@ -236,6 +250,7 @@ wheel.addEventListener('pointerdown', e => { wheel.setPointerCapture(e.pointerId
 wheel.addEventListener('pointermove', e => { if (e.buttons || e.pointerType === 'touch') onWheel(e); });
 wheel.addEventListener('pointerup', onWheel);
 drawWheel();
+autoConnect();
 
 $('bright').oninput = e => send(cmd.bright(+e.target.value));
 
