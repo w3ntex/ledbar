@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#111">
+<title>LedBar</title>
+<style>
+  :root { --bg:#0f0f12; --card:#1b1b20; --line:#2c2c33; --txt:#f2f2f5; --dim:#8b8b96; --acc:#ffb020; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:15px -apple-system, system-ui, sans-serif;
+         padding:calc(env(safe-area-inset-top) + 12px) 16px calc(env(safe-area-inset-bottom) + 24px); }
+  .wrap { max-width:460px; margin:0 auto; display:flex; flex-direction:column; gap:14px; }
+  header { display:flex; align-items:center; gap:10px; }
+  header h1 { font-size:22px; margin:0; flex:1; }
+  .dot { width:10px; height:10px; border-radius:50%; background:#e0a020; flex:none; }
+  .dot.on { background:#3c3; } .dot.off { background:#666; }
+  #status { color:var(--dim); font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; display:flex; flex-direction:column; gap:12px; }
+  .label { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.06em; }
+  button { font:inherit; color:var(--txt); background:#2a2a31; border:1px solid var(--line); border-radius:12px; padding:12px; }
+  button:active { transform:scale(.97); }
+  .primary { background:var(--acc); color:#111; border:none; font-weight:600; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .switch { width:56px; height:32px; border-radius:16px; background:#3a3a42; position:relative; border:none; padding:0; flex:none; }
+  .switch::after { content:""; position:absolute; top:3px; left:3px; width:26px; height:26px; border-radius:50%; background:#fff; transition:.2s; }
+  .switch.on { background:#34c759; } .switch.on::after { left:27px; }
+  .presets { display:grid; grid-template-columns:repeat(9,1fr); gap:6px; }
+  .presets button { aspect-ratio:1; padding:0; border-radius:50%; border:2px solid #0004; }
+  #wheel { width:min(260px,72vw); aspect-ratio:1; display:block; margin:0 auto; touch-action:none; border-radius:50%; }
+  input[type=range] { width:100%; accent-color:var(--acc); height:28px; }
+  .fx { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .fx button { font-size:13px; padding:10px 6px; }
+  .fx button.sel { background:var(--acc); color:#111; border-color:var(--acc); }
+  .hint { color:var(--dim); font-size:12px; line-height:1.4; }
+  .disabled { opacity:.45; pointer-events:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="dot off" id="dot"></span>
+    <h1>LedBar</h1>
+    <button id="connectBtn" class="primary">Connecter</button>
+  </header>
+  <div id="status">Appuie sur « Connecter » et choisis ELK-BLEDOB.</div>
+
+  <div id="controls" class="disabled" style="display:flex;flex-direction:column;gap:14px">
+    <div class="card">
+      <div class="row"><b>Allumé</b><button class="switch on" id="power" aria-label="Allumer / éteindre"></button></div>
+    </div>
+
+    <div class="card">
+      <div class="label">Couleur</div>
+      <div class="presets" id="presets"></div>
+      <canvas id="wheel" width="520" height="520"></canvas>
+    </div>
+
+    <div class="card">
+      <div class="label">Luminosité</div>
+      <input type="range" id="bright" min="0" max="100" value="100">
+    </div>
+
+    <div class="card">
+      <div class="label">Effets</div>
+      <div class="fx" id="fx"></div>
+      <div class="label">Vitesse</div>
+      <input type="range" id="speed" min="0" max="100" value="50">
+    </div>
+
+    <div class="card">
+      <div class="row"><span>Partager avec le PC</span><button class="switch on" id="share" aria-label="Partager"></button></div>
+      <div class="hint">Libère la lampe 3 s après la dernière commande, pour que LedBar sur le Mac puisse s'y connecter. Les commandes suivantes se reconnectent automatiquement.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const SERVICE = 0xfff0, CHAR = 0xfff3;
+let device = null, ch = null, connecting = null, releaseTimer = null;
+let isOn = true, share = localStorage.getItem('share') !== '0';
+let hue = 0, sat = 0, fxTimer = null, fxSel = null, fxT = 0;
+
+function setStatus(t, state) {
+  $('status').textContent = t;
+  $('dot').className = 'dot ' + (state || '');
+}
+
+// ---------- Bluetooth ----------
+async function pick() {
+  if (!navigator.bluetooth) {
+    setStatus("Ce navigateur ne gère pas le Bluetooth. Ouvre cette page dans l'app Bluefy.", 'off');
+    return;
+  }
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'ELK-BLEDOB' }, { namePrefix: 'ELK-BLEDOM' }],
+      optionalServices: [SERVICE]
+    });
+    device.addEventListener('gattserverdisconnected', () => {
+      ch = null;
+      setStatus(fxTimer ? 'Reconnexion…' : 'Prêt (connexion libérée pour le PC)', 'off');
+      if (fxTimer) ensure();
+    });
+    $('controls').classList.remove('disabled');
+    $('connectBtn').textContent = 'Changer';
+    await ensure();
+  } catch (e) { setStatus('Connexion annulée : ' + e.message, 'off'); }
+}
+
+function ensure() {
+  if (ch) return Promise.resolve(ch);
+  if (connecting) return connecting;
+  setStatus('Connexion… (lampe occupée par le PC ?)');
+  connecting = (async () => {
+    for (let i = 0; i < 20; i++) {
+      try {
+        const srv = await device.gatt.connect();
+        const s = await srv.getPrimaryService(SERVICE);
+        ch = await s.getCharacteristic(CHAR);
+        setStatus('Connecté : ' + device.name.trim(), 'on');
+        return ch;
+      } catch (e) { await new Promise(r => setTimeout(r, 1500)); }
+    }
+    throw new Error('Lampe injoignable');
+  })().finally(() => { connecting = null; });
+  return connecting;
+}
+
+// File d'écriture : une seule écriture BLE à la fois, on garde la dernière commande de chaque type.
+const pending = new Map(); let writing = false;
+function send(bytes) {
+  pending.set(bytes[2], bytes);
+  pump();
+}
+async function pump() {
+  if (writing || !device) return;
+  writing = true;
+  try {
+    while (pending.size) {
+      const c = await ensure();
+      const [k, b] = pending.entries().next().value;
+      pending.delete(k);
+      const data = new Uint8Array(b);
+      if (c.writeValueWithoutResponse) await c.writeValueWithoutResponse(data);
+      else await c.writeValue(data);
+    }
+  } catch (e) { setStatus('Erreur : ' + e.message, 'off'); ch = null; }
+  writing = false;
+  scheduleRelease();
+}
+function scheduleRelease() {
+  clearTimeout(releaseTimer);
+  if (!share || fxTimer) return;
+  releaseTimer = setTimeout(() => {
+    if (!fxTimer && device && device.gatt.connected) device.gatt.disconnect();
+  }, 3000);
+}
+
+// ---------- Commandes ELK ----------
+const cmd = {
+  power: on => on ? [0x7e,0x00,0x04,0xf0,0x00,0x01,0xff,0x00,0xef] : [0x7e,0x00,0x04,0x00,0x00,0x00,0xff,0x00,0xef],
+  rgb: (r,g,b) => [0x7e,0x07,0x05,0x03,r,g,b,0x10,0xef],
+  bright: v => [0x7e,0x04,0x01,v,0x01,0xff,0x02,0x01,0xef],
+};
+const rgbSend = c => send(cmd.rgb(...c.map(v => Math.round(v * 255))));
+
+function hsv(h, s, v = 1) {
+  const f = n => { const k = (n + h * 6) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return [f(5), f(3), f(1)];
+}
+
+// ---------- Interface ----------
+function setPower(on) {
+  isOn = on; $('power').classList.toggle('on', on);
+  if (!on) stopFx();
+  send(cmd.power(on));
+}
+$('power').onclick = () => setPower(!isOn);
+$('connectBtn').onclick = pick;
+$('share').classList.toggle('on', share);
+$('share').onclick = () => {
+  share = !share; localStorage.setItem('share', share ? '1' : '0');
+  $('share').classList.toggle('on', share); scheduleRelease();
+};
+
+const PRESETS = [[1,0,0],[1,.5,0],[1,1,0],[0,1,0],[0,1,1],[0,0,1],[.6,0,1],[1,.3,.6],[1,1,1]];
+PRESETS.forEach(c => {
+  const b = document.createElement('button');
+  b.style.background = `rgb(${c.map(v => v * 255)})`;
+  b.onclick = () => { stopFx(); if (!isOn) setPower(true); rgbSend(c); };
+  $('presets').appendChild(b);
+});
+
+// Roue de couleurs
+const wheel = $('wheel'), ctx = wheel.getContext('2d'), R = wheel.width / 2;
+const base = (() => {
+  const img = ctx.createImageData(wheel.width, wheel.height);
+  for (let y = 0; y < wheel.height; y++) for (let x = 0; x < wheel.width; x++) {
+    const dx = x - R, dy = y - R, d = Math.hypot(dx, dy) / R, i = (y * wheel.width + x) * 4;
+    if (d > 1) continue;
+    let a = Math.atan2(dy, dx) / (2 * Math.PI) + .25; if (a < 0) a += 1;
+    const [r, g, b] = hsv(a % 1, d);
+    img.data.set([r * 255, g * 255, b * 255, 255], i);
+  }
+  return img;
+})();
+function drawWheel() {
+  ctx.putImageData(base, 0, 0);
+  const ang = hue * 2 * Math.PI - Math.PI / 2;
+  const x = R + Math.cos(ang) * sat * R, y = R + Math.sin(ang) * sat * R;
+  ctx.beginPath(); ctx.arc(x, y, 18, 0, 7);
+  ctx.fillStyle = `rgb(${hsv(hue, sat).map(v => v * 255)})`; ctx.fill();
+  ctx.lineWidth = 5; ctx.strokeStyle = '#fff'; ctx.stroke();
+}
+let lastWheel = 0;
+function onWheel(e) {
+  e.preventDefault();
+  const r = wheel.getBoundingClientRect();
+  const dx = (e.clientX - r.left) / r.width * 2 - 1, dy = (e.clientY - r.top) / r.height * 2 - 1;
+  let a = Math.atan2(dy, dx) / (2 * Math.PI) + .25; if (a < 0) a += 1;
+  hue = a % 1; sat = Math.min(1, Math.hypot(dx, dy));
+  drawWheel(); stopFx();
+  const now = Date.now();
+  if (now - lastWheel > 60 || e.type === 'pointerup') { lastWheel = now; if (!isOn) setPower(true); rgbSend(hsv(hue, sat)); }
+}
+wheel.addEventListener('pointerdown', e => { wheel.setPointerCapture(e.pointerId); onWheel(e); });
+wheel.addEventListener('pointermove', e => { if (e.buttons || e.pointerType === 'touch') onWheel(e); });
+wheel.addEventListener('pointerup', onWheel);
+drawWheel();
+
+$('bright').oninput = e => send(cmd.bright(+e.target.value));
+
+// Effets (calculés par la page, comme sur le Mac)
+const C = { R:[1,0,0], G:[0,1,0], B:[0,0,1], Y:[1,1,0], Cy:[0,1,1], M:[1,0,1], W:[1,1,1], O:[1,.5,0], K:[0,0,0] };
+const FX = [
+  ['Saut RVB',[C.R,C.G,C.B],'jump'], ['Saut 7 couleurs',[C.R,C.O,C.Y,C.G,C.Cy,C.B,C.M],'jump'],
+  ['Fondu RVB',[C.R,C.G,C.B],'fade'], ['Arc-en-ciel',[C.R,C.Y,C.G,C.Cy,C.B,C.M],'fade'],
+  ['Fondu rouge/bleu',[C.R,C.B],'fade'], ['Fondu vert/bleu',[C.G,C.B],'fade'],
+  ['Fondu rouge/vert',[C.R,C.G],'fade'], ['Fondu cyan/violet',[C.Cy,C.M],'fade'],
+  ['Respiration rouge',[C.R,C.K],'fade'], ['Respiration bleu',[C.B,C.K],'fade'],
+  ['Respiration blanc',[C.W,C.K],'fade'], ['Feu',[C.R,C.O,[.6,.1,0],C.Y],'fade'],
+  ['Océan',[C.B,C.Cy,[0,.4,1],[0,.2,.6]],'fade'], ['Clignote rouge',[C.R],'blink'],
+  ['Clignote blanc',[C.W],'blink'], ['Clignote 7 couleurs',[C.R,C.O,C.Y,C.G,C.Cy,C.B,C.M],'blink'],
+  ['Police',[C.R,C.B],'blink'], ['Fête',[C.M,C.Cy,C.Y,C.G],'jump'],
+];
+FX.forEach((f, i) => {
+  const b = document.createElement('button');
+  b.textContent = f[0];
+  b.onclick = () => startFx(i);
+  $('fx').appendChild(b);
+});
+function markFx() { [...$('fx').children].forEach((b, i) => b.classList.toggle('sel', i === fxSel)); }
+function startFx(i) {
+  stopFx(true);
+  if (!isOn) setPower(true);
+  fxSel = i; fxT = 0; markFx(); clearTimeout(releaseTimer);
+  const [, cols, kind] = FX[i];
+  fxTimer = setInterval(() => {
+    fxT += .08;
+    const period = 2 - 1.9 * ($('speed').value / 100);
+    const pos = (fxT / period) % cols.length, k = Math.floor(pos), f = pos - k;
+    const a = cols[k], b = cols[(k + 1) % cols.length];
+    const c = kind === 'jump' ? a : kind === 'blink' ? (f < .5 ? a : C.K) : a.map((v, j) => v + (b[j] - v) * f);
+    rgbSend(c);
+  }, 80);
+}
+function stopFx(keep) {
+  if (fxTimer) { clearInterval(fxTimer); fxTimer = null; }
+  if (!keep) { fxSel = null; markFx(); scheduleRelease(); }
+}
+</script>
+</body>
+</html>
